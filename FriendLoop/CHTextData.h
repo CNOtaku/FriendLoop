@@ -49,10 +49,12 @@ typedef enum : NSUInteger{
 
 
 
--(float)calculateShuoshuoHeightWithWidth:(float)sizeWidth withUnflodState:(BOOL)isUnfold;
+- (float) calculateShuoshuoHeightWithWidth:(float)sizeWidth withUnFoldState:(BOOL)isUnfold;
 
 -(float)calculateFavourHeightWidth:(float)sizeWidth;
 
 -(float)initWithMessage:(CHMessageBody *)messageBody;
 
+
+-(float)calculateReplyHeightWithWidth:(float)sizeWidth;
 @end

@@ -164,6 +164,333 @@
     
     self.view.backgroundColor = [UIColor grayColor];
     [self configData];
+    [self initTableView];
+    [self loadTextData];
+}
+
+-(void)loadTextData
+{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSMutableArray *chDataArray = [[NSMutableArray alloc]init];
+        
+        for (int i = 0; i<_contentDataSource.count; i++) {
+            CHMessageBody *messBody = [_contentDataSource objectAtIndex:i];
+            
+            CHTextData *ymData = [[CHTextData alloc] init ];
+            ymData.messageBody = messBody;
+            
+            [chDataArray addObject:ymData];
+        }
+        [self caculateHeight:chDataArray];
+    });
+}
+-(void)caculateHeight:(NSMutableArray *)dataArray
+{
+//    NSDate *tempDate = [NSDate date];
+    for (CHTextData *ymData in dataArray) {
+        
+        ymData.shuoshuoHeight = [ymData calculateShuoshuoHeightWithWidth:self.view.frame.size.width withUnFoldState:NO];//折叠
+        
+        ymData.unFoldShuoHeight = [ymData calculateShuoshuoHeightWithWidth:self.view.frame.size.width withUnFoldState:YES];//展开
+        
+        ymData.replyHeight = [ymData calculateReplyHeightWithWidth:self.view.frame.size.width];
+        
+        ymData.favourHeight = [ymData calculateFavourHeightWidth:self.view.frame.size.width];
+        
+        [_tableViewDataSource addObject:ymData];
+    }
+    
+    
+//    double delaTime = [[NSDate date] timeIntervalSinceDate:tempDate];
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [mainTable reloadData];
+    });
+
+}
+-(void)initTableView
+{
+
+    mainTable = [[UITableView alloc]initWithFrame:self.view.bounds];
+    mainTable.backgroundColor = [UIColor clearColor];
+    mainTable.delegate = self;
+    mainTable.dataSource = self;
+    
+    [self.view addSubview:mainTable];
+}
+
+
+-(NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return _tableViewDataSource.count;
+}
+
+-(CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    CHTextData *ch = [_tableViewDataSource objectAtIndex:indexPath.row];
+    
+    BOOL unFold = ch.foldOrNot;
+    return TableHeader +kLocationToBottom+ch.replyHeight+ch.showImageHeight +kDistance+(ch.islessLimit?0:30)+(unFold?ch.shuoshuoHeight:ch.unFoldShuoHeight)+kReplyBtnDistance+ch.favourHeight+(ch.favourHeight==0?0:kReply_FavourDistance);
+}
+-(UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    static NSString *reuseS = @"cell";
+    CHTableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"cell"];
+    if (!cell) {
+        cell = [[CHTableViewCell alloc]initWithStyle:UITableViewCellStyleDefault reuseIdentifier:reuseS];
+        
+    }
+    cell.stamp = indexPath.row;
+    cell.replyButton.appendIndexPath = indexPath;
+    [cell.replyButton addTarget:self action:@selector(replyAction:) forControlEvents:UIControlEventTouchUpInside];
+    cell.delegate = self;
+    
+    [cell setCHViewWith:[_tableViewDataSource objectAtIndex:indexPath.row]];
+    
+    return cell;
+}
+
+-(void)replyAction:(CHButton *)sender
+{
+    CGRect rectInTableView = [mainTable rectForRowAtIndexPath:sender.appendIndexPath];
+    CGFloat orgin_Y = rectInTableView.origin.y+sender.frame.origin.y;
+    CGRect targetRect = CGRectMake(CGRectGetMidX(sender.frame), orgin_Y, CGRectGetWidth(sender.bounds), CGRectGetHeight(sender.bounds));
+    
+    
+    if (self.operationView.shouldShowed) {
+        [self.operationView dissMiss];
+        return;
+    }
+    
+    _selectedIndexPath = sender.appendIndexPath;
+    CHTextData *ch = [_tableViewDataSource objectAtIndex:_selectedIndexPath.row];
+    [self.operationView showAtView:mainTable rect:targetRect isFavor:ch.hasFavour];
+    
+}
+
+
+-(CHPopView *)operationView
+{
+    if (!_operationView) {
+        _operationView = [CHPopView initalizerCHOperationView];
+        WS(ws);
+        
+        _operationView.didSelectedOpeartionCompletion = ^(CHOperationType operationType){
+            switch (operationType) {
+                case CHOperationTypeLike:
+                    [ws addLike];
+                    break;
+                    case CHOperationTypeReply:
+                    [ws replyMessage:nil];
+                    break;
+                    
+                default:
+                    break;
+            }
+        };
+        
+    }
+    return _operationView;
+}
+
+-(void)addLike
+{
+    CHTextData *chData = [_tableViewDataSource objectAtIndex:_selectedIndexPath.row];
+    CHMessageBody *messageBody = chData.messageBody;
+    
+    if (messageBody.isFavour == YES) {
+        [messageBody.posterFavor removeObject:kAdmin];
+        messageBody.isFavour = NO;
+    }else{
+    
+        [messageBody.posterFavor addObject:kAdmin];
+    }
+    chData.messageBody = messageBody;
+    
+    [chData.attributedDataFavour removeAllObjects];
+    
+    chData.favourHeight = [chData calculateFavourHeightWidth:self.view.frame
+                           .size.width];
+    
+    [_tableViewDataSource replaceObjectAtIndex:_selectedIndexPath.row withObject:chData];
+    
+    
+    [mainTable reloadData];
+
+}
+-(void)replyMessage:(CHButton *)sender
+{
+    if (replyInputView) {
+        return;
+    }
+    replyInputView = [[CHReplyInputView alloc]initWithFrame:CGRectMake(0, self.view.frame.size.height-44, screenWidth, 44) andAboveView:self.view];
+    replyInputView.delegate = self;
+    replyInputView.replyTag = _selectedIndexPath.row;
+    
+    [self.view addSubview:replyInputView];
+    
+}
+
+-(void)scrollViewDidScroll:(UIScrollView *)scrollView
+{
+    [self.operationView dissMiss];
+}
+
+-(void)changeFoldState:(CHTextData *)chData onCellInRow:(NSInteger)cellStamp
+{
+    [_tableViewDataSource replaceObjectAtIndex:cellStamp withObject:chData];
+    
+    [mainTable reloadData];
+}
+
+#pragma mark - 图片点击事件回调
+- (void)showImageViewWithImageViews:(NSArray *)imageViews byClickWhich:(NSInteger)clickTag{
+    
+    UIView *maskview = [[UIView alloc] initWithFrame:self.view.bounds];
+    maskview.backgroundColor = [UIColor blackColor];
+    [self.view addSubview:maskview];
+    
+    CHShowImageView *ymImageV = [[CHShowImageView alloc] initWithFrame:self.view.bounds byClick:clickTag appendArray:imageViews];
+    [ymImageV show:maskview didFinish:^(){
+        
+        [UIView animateWithDuration:0.5f animations:^{
+            
+            ymImageV.alpha = 0.0f;
+            maskview.alpha = 0.0f;
+            
+        } completion:^(BOOL finished) {
+            
+            [ymImageV removeFromSuperview];
+            [maskview removeFromSuperview];
+        }];
+        
+    }];
+    
+}
+
+#pragma mark - 长按评论整块区域的回调
+- (void)longClickRichText:(NSInteger)index replyIndex:(NSInteger)replyIndex{
+    
+    [self.operationView dissMiss];
+    CHTextData *ymData = (CHTextData *)[_tableViewDataSource objectAtIndex:index];
+    CHReplyBody *b = [ymData.messageBody.posterReplies objectAtIndex:replyIndex];
+    
+    UIPasteboard *pboard = [UIPasteboard generalPasteboard];
+    pboard.string = b.replyInfo;
+    
+}
+
+#pragma mark - 点评论整块区域的回调
+- (void)clickRichText:(NSInteger)index replyIndex:(NSInteger)replyIndex{
+    
+    [self.operationView dissMiss];
+    
+    _replyIndex = replyIndex;
+    
+    CHTextData *ymData = (CHTextData *)[_tableViewDataSource objectAtIndex:index];
+    CHReplyBody *b = [ymData.messageBody.posterReplies objectAtIndex:replyIndex];
+    if ([b.replyUser isEqualToString:kAdmin]) {
+        CHActionSheet *actionSheet = [[CHActionSheet alloc] initWithTitle:@"删除评论？" delegate:self cancelButtonTitle:@"取消" destructiveButtonTitle:@"确定" otherButtonTitles:nil, nil];
+        actionSheet.actionIndex = index;
+        [actionSheet showInView:self.view];
+        
+        
+        
+    }else{
+        //回复
+        if (replyInputView) {
+            return;
+        }
+        replyInputView = [[CHReplyInputView alloc] initWithFrame:CGRectMake(0, self.view.frame.size.height - 44, screenWidth,44) andAboveView:self.view];
+        replyInputView.delegate = self;
+        replyInputView.labelPlaceHolder.text = [NSString stringWithFormat:@"回复%@:",b.replyUser];
+        replyInputView.replyTag = index;
+        [self.view addSubview:replyInputView];
+    }
+}
+
+#pragma mark - 评论说说回调
+- (void)YMReplyInputWithReply:(NSString *)replyText appendTag:(NSInteger)inputTag{
+    
+    CHTextData *ymData = nil;
+    if (_replyIndex == -1) {
+        
+        CHReplyBody *body = [[CHReplyBody alloc] init];
+        body.replyUser = kAdmin;
+        body.repliedUser = @"";
+        body.replyInfo = replyText;
+        
+        ymData = (CHTextData *)[_tableViewDataSource objectAtIndex:inputTag];
+        CHMessageBody *m = ymData.messageBody;
+        [m.posterReplies addObject:body];
+        ymData.messageBody = m;
+        
+    }else{
+        
+        ymData = (CHTextData *)[_tableViewDataSource objectAtIndex:inputTag];
+        CHMessageBody *m = ymData.messageBody;
+        
+        CHReplyBody *body = [[CHReplyBody alloc] init];
+        body.replyUser = kAdmin;
+        body.repliedUser = [(CHReplyBody *)[m.posterReplies objectAtIndex:_replyIndex] replyUser];
+        body.replyInfo = replyText;
+        
+        [m.posterReplies addObject:body];
+        ymData.messageBody = m;
+        
+    }
+    
+    
+    
+    //清空属性数组。否则会重复添加
+    [ymData.completionReplySource removeAllObjects];
+    [ymData.attributedDataReply removeAllObjects];
+    
+    
+    ymData.replyHeight = [ymData calculateReplyHeightWithWidth:self.view.frame.size.width];
+    [_tableViewDataSource replaceObjectAtIndex:inputTag withObject:ymData];
+    
+    [mainTable reloadData];
+    
+}
+
+- (void)destorySelf{
+    
+    //  NSLog(@"dealloc reply");
+    [replyInputView removeFromSuperview];
+    replyInputView = nil;
+    _replyIndex = -1;
+    
+}
+
+-(void)actionSheet:(CHActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex{
+    if (buttonIndex == 0) {
+        //delete
+        CHTextData *ymData = (CHTextData *)[_tableViewDataSource objectAtIndex:actionSheet.cancelButtonIndex];
+        CHMessageBody *m = ymData.messageBody;
+        [m.posterReplies removeObjectAtIndex:_replyIndex];
+        ymData.messageBody = m;
+        [ymData.completionReplySource removeAllObjects];
+        [ymData.attributedDataReply removeAllObjects];
+        
+        
+        ymData.replyHeight = [ymData calculateReplyHeightWithWidth:self.view.frame.size.width];
+        [_tableViewDataSource replaceObjectAtIndex:actionSheet.actionIndex withObject:ymData];
+        
+        [mainTable reloadData];
+        
+    }else{
+        
+    }
+    _replyIndex = -1;
+}
+
+
+
+- (void)dealloc{
+    
+    NSLog(@"销毁");
+    
 }
 
 - (void)didReceiveMemoryWarning {
